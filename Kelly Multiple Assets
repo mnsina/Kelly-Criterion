@@ -1,0 +1,153 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import minimize
+
+# =========================
+# Utility Functions
+# =========================
+
+def generate_random_data(n_assets):
+    returns = np.random.uniform(0.05, 0.2, n_assets)
+    # Random correlations between -0.3 and 0.3
+    rand_pos = np.random.uniform(0.05, 0.3, (n_assets, n_assets))
+    rand_neg = np.random.uniform(-0.3, -0.05, (n_assets, n_assets))
+    mask = np.random.rand(n_assets, n_assets) < 0.5
+    rand_pos[mask] = rand_neg[mask]
+    corr = (rand_pos + rand_pos.T)/2
+    np.fill_diagonal(corr, 1.0)
+    eigvals, eigvecs = np.linalg.eigh(corr)
+    eigvals[eigvals < 0.0001] = 0.0001
+    corr = eigvecs @ np.diag(eigvals) @ eigvecs.T
+    stds = np.random.uniform(0.05, 0.2, n_assets)
+    cov = np.outer(stds, stds) * corr
+    return returns, cov
+
+def portfolio_perf(weights, returns, cov):
+    var = max(np.dot(weights.T, np.dot(cov, weights)), 0)
+    port_return = np.dot(weights, returns)
+    port_vol = np.sqrt(var)
+    return port_return, port_vol
+
+# =========================
+# Main Program
+# =========================
+
+def main():
+    # -----------------
+    # Step 0: Generate risky assets
+    # -----------------
+    n = int(input("How many risky assets? "))
+    returns, cov = generate_random_data(n)
+    assets = [f"Asset{i+1}" for i in range(n)]
+    print("Expected Returns:", returns)
+    print("Covariance Matrix:\n", cov)
+
+    # -----------------
+    # Step 1: Risky assets only (weights sum to 1, shorting allowed)
+    # -----------------
+    n_points = 400
+    frontier_risky = []
+
+    for target_return in np.linspace(min(returns), max(returns)*2.5, n_points):
+        constraints = (
+            {'type':'eq','fun': lambda w: np.sum(w)-1},
+            {'type':'eq','fun': lambda w, tr=target_return: np.dot(w, returns)-tr}
+        )
+        bounds = tuple((None,None) for _ in range(n))
+        res = minimize(lambda w: w @ cov @ w, np.ones(n)/n,
+                       bounds=bounds, constraints=constraints)
+        if res.success:
+            frontier_risky.append((np.sqrt(res.fun), target_return))
+    frontier_risky = np.array(frontier_risky)
+
+    # MVP risky-only
+    res_mv = minimize(lambda w: w @ cov @ w,
+                      np.ones(n)/n,
+                      bounds=tuple((None,None) for _ in range(n)),
+                      constraints=({'type':'eq','fun': lambda w: np.sum(w)-1},))
+    w_mv = res_mv.x
+    r_mv, sd_mv = portfolio_perf(w_mv, returns, cov)
+    print("\nMVP (risky only) weights:")
+    for i,w in enumerate(w_mv): print(f"{assets[i]}: {w:.4f}")
+
+    # Kelly risky-only
+    inv_cov = np.linalg.inv(cov)
+    w_kelly = inv_cov @ returns
+    w_kelly /= np.sum(w_kelly)
+    r_k, sd_k = portfolio_perf(w_kelly, returns, cov)
+    print("\nKelly (risky only) weights:")
+    for i,w in enumerate(w_kelly): print(f"{assets[i]}: {w:.4f}")
+
+    # -----------------
+    # Step 2: Include Risk-Free Asset
+    # -----------------
+    rf = float(input("\nEnter risk-free rate (can be negative, e.g. 0.02): "))
+    
+    # Tangency portfolio: max Sharpe on risky frontier
+    sharpe_ratios = (frontier_risky[:,1] - rf) / frontier_risky[:,0]
+    idx_max = np.argmax(sharpe_ratios)
+    sd_tan, r_tan = frontier_risky[idx_max]
+
+    # Compute weights for tangency portfolio
+    target_return = r_tan
+    constraints = (
+        {'type':'eq','fun': lambda w: np.sum(w)-1},
+        {'type':'eq','fun': lambda w: np.dot(w, returns)-target_return}
+    )
+    bounds = tuple((None,None) for _ in range(n))
+    res_tan = minimize(lambda w: w @ cov @ w, np.ones(n)/n, bounds=bounds, constraints=constraints)
+    w_tan = res_tan.x
+    print(f"\nTangency Portfolio (CML intersection) σ={sd_tan:.4f}, μ={r_tan:.4f}")
+    print("Weights:")
+    for i,w in enumerate(w_tan):
+        print(f"{assets[i]}: {w:.4f}")
+
+    # Kelly with RF (leveraged)
+    returns_ext = np.append(returns, rf)
+    cov_ext = np.zeros((n+1, n+1))
+    cov_ext[:n,:n] = cov
+    cov_ext[-1,-1] = 0.0
+    n_ext = n+1
+    assets_ext = assets + ["RF"]
+
+    res_k_ext = minimize(lambda w: -(np.dot(w, returns_ext) - 0.5*np.dot(w, cov_ext@w)),
+                         np.ones(n_ext)/n_ext,
+                         bounds=tuple((None,None) for _ in range(n_ext)),
+                         constraints=({'type':'eq','fun': lambda w: np.sum(w)-1},))
+    w_k_ext = res_k_ext.x
+    r_k_ext, sd_k_ext = portfolio_perf(w_k_ext, returns_ext, cov_ext)
+    print("\nKelly (with RF, leveraged, sum=1) weights:")
+    for i,w in enumerate(w_k_ext): print(f"{assets_ext[i]}: {w:.4f}")
+
+    # -----------------
+    # Step 3: Plot
+    # -----------------
+    plt.figure(figsize=(10,6))
+    # risky asset points
+    for i in range(n):
+        plt.scatter(np.sqrt(cov[i,i]), returns[i], color='black', marker='x')
+        plt.text(np.sqrt(cov[i,i])*1.01, returns[i]*1.005, assets[i], fontsize=9)
+
+    # risky-only frontier
+    plt.plot(frontier_risky[:,0], frontier_risky[:,1], color='blue', label='Efficient Frontier (risky only)')
+    plt.scatter(sd_mv, r_mv, color='green', label='MVP (risky only)')
+    plt.scatter(sd_k, r_k, color='red', marker='^', label='Kelly (risky only)')
+
+    # CML line
+    cml_x = np.linspace(0, max(frontier_risky[:,0])*2.5, 400)
+    cml_y = rf + (r_tan - rf)/sd_tan * cml_x
+    plt.plot(cml_x, cml_y, color='cyan', linestyle='--', label='CML (with RF)')
+
+    # Tangency and Kelly with RF points
+    plt.scatter(sd_tan, r_tan, color='pink', marker='x', label='Tangency Portfolio')
+    plt.scatter(sd_k_ext, r_k_ext, color='orange', marker='s', label='Kelly (with RF)')
+
+    plt.xlabel('Portfolio Std Dev (σ)')
+    plt.ylabel('Portfolio Return (μ)')
+    plt.title('MPT: Risky Assets and Risk-Free Asset (weights sum=1, shorting allowed)')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+if __name__ == "__main__":
+    main()
