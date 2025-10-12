@@ -148,7 +148,8 @@ def main():
 
     print("\nKelly (risky only) normalized weights:")
     for i,w in enumerate(w_kelly): print(f"{assets[i]}: {w:.4f}")
-
+    print(f"Kelly return (no RF): {r_k:.4f}, sd: {sd_k:.4f}")
+    
     # Step 2: Include Risk-Free Asset
     rf_input = float(input("\nEnter risk-free rate (e.g., 0.02 or 2 for 2%): "))
     rf = rf_input/100.0 if rf_input > 1 else rf_input
@@ -204,5 +205,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
