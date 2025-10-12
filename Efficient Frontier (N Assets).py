@@ -9,6 +9,8 @@ MPT demo improved:
 - Plots efficient frontier, CML, tangency, Kelly portfolios.
 """
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 
@@ -201,7 +203,12 @@ def main():
     plt.title('MPT: Risky Assets + Risk-Free (weights sum=1 including RF)')
     plt.legend()
     plt.grid(True)
-    plt.show()
+    #plt.show()
+    plt.xlim(0, 0.5)
+    plt.ylim(0, 0.5)
+    plt.savefig("grafico.png")
+    print("✅ Graph saved as graph.png")
+    input("Press Enter to exit...")
 
 if __name__ == "__main__":
     main()
